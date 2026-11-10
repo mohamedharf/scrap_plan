@@ -1,0 +1,28 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Django local database, logs, and runtime files
+db.sqlite3
+db.sqlite3-journal
+*.log
+*.flag
+media/
+staticfiles/
+
+# Environment & IDE files
+.env
+.env.local
+.vscode/
+.idea/
+.DS_Store
+
+# AI / scratch artifacts
+*.resolved

@@ -1,0 +1,225 @@
+{% extends 'scraper/base.html' %}
+
+{% block title %}Dashboard | Perenual Plant Scraper{% endblock %}
+
+{% block content %}
+<div class="row text-center mt-2">
+    <div class="col-12">
+        <div class="hero mb-4 shadow-sm">
+            <h1 class="display-5 fw-semibold">Plant Mapping &amp; Data Extraction</h1>
+            <p class="lead mb-0">Configure and monitor the automated Selenium scraper for Perenual's species database.</p>
+        </div>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card border-0 shadow-sm p-4 text-center">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h4 class="mb-0">Database Status</h4>
+                <span id="statusBadge" class="badge {% if is_running %}bg-warning text-dark{% else %}bg-success-subtle text-success-emphasis{% endif %}">
+                    {% if is_running %}Running{% else %}Idle{% endif %}
+                </span>
+            </div>
+
+            <div class="display-4 fw-bold text-success mt-2" id="plantCount">{{ total_plants }}</div>
+            <p class="text-muted mb-3">Plants currently stored locally</p>
+            <hr>
+
+            <div class="mb-3 text-start">
+                <label for="maxPlants" class="form-label fw-semibold">Maximum Plants to Scrape</label>
+                <input type="number" class="form-control" id="maxPlants" value="10" min="1" max="500">
+                <div class="form-text">Limit how many new plant species to fetch in this job (1–500).</div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button id="scrapeBtn" class="btn btn-lg btn-success flex-grow-1" {% if is_running %}disabled{% endif %}>
+                    {% if is_running %}
+                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Scraper Running...
+                    {% else %}
+                    🚀 Start New Scraping Job
+                    {% endif %}
+                </button>
+                <button id="stopBtn" class="btn btn-lg btn-danger {% if not is_running %}d-none{% endif %}">
+                    🛑 Stop Scraper
+                </button>
+            </div>
+
+            <div id="statusAlert" class="alert mt-3 mb-0 d-none" role="alert"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0">Live Scraping Logs</h5>
+            <button id="clearLogsBtn" class="btn btn-sm btn-outline-secondary">🗑️ Clear Logs</button>
+        </div>
+        <pre id="logTerminal" class="p-3 rounded text-start shadow-sm"
+            style="background-color: #1a1d20; color: #4ade80; height: 320px; overflow-y: auto; font-size: 0.875rem; white-space: pre-wrap; font-family: monospace;">{{ initial_logs }}</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const scrapeBtn = document.getElementById('scrapeBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const clearLogsBtn = document.getElementById('clearLogsBtn');
+    const alertBox = document.getElementById('statusAlert');
+    const logTerminal = document.getElementById('logTerminal');
+    const plantCount = document.getElementById('plantCount');
+    const statusBadge = document.getElementById('statusBadge');
+
+    let isRunning = {{ is_running|yesno:"true,false" }};
+    let pollTimer = null;
+
+    function showAlert(variant, message) {
+        alertBox.className = `alert mt-3 mb-0 alert-${variant}`;
+        alertBox.textContent = message;
+    }
+
+    function setRunningUI(running) {
+        isRunning = running;
+        if (running) {
+            scrapeBtn.disabled = true;
+            scrapeBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Scraper Running...';
+            stopBtn.classList.remove('d-none');
+            stopBtn.disabled = false;
+            stopBtn.textContent = '🛑 Stop Scraper';
+            statusBadge.className = 'badge bg-warning text-dark';
+            statusBadge.textContent = 'Running';
+        } else {
+            scrapeBtn.disabled = false;
+            scrapeBtn.textContent = '🚀 Start New Scraping Job';
+            stopBtn.classList.add('d-none');
+            stopBtn.disabled = false;
+            stopBtn.textContent = '🛑 Stop Scraper';
+            statusBadge.className = 'badge bg-success-subtle text-success-emphasis';
+            statusBadge.textContent = 'Idle';
+        }
+    }
+
+    async function pollUpdates() {
+        try {
+            const [statusRes, logsRes] = await Promise.all([
+                fetch("{% url 'scraper:get_scraping_status' %}"),
+                fetch("{% url 'scraper:get_scraping_logs' %}")
+            ]);
+
+            if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                plantCount.textContent = statusData.total_plants;
+                if (isRunning && !statusData.is_running) {
+                    setRunningUI(false);
+                    stopPolling();
+                    showAlert('success', 'Scraping job finished.');
+                } else {
+                    setRunningUI(statusData.is_running);
+                }
+            }
+
+            if (logsRes.ok) {
+                const logsData = await logsRes.json();
+                logTerminal.textContent = logsData.logs;
+                logTerminal.scrollTop = logTerminal.scrollHeight;
+            }
+        } catch (err) {
+            console.error('Polling error:', err);
+        }
+    }
+
+    function startPolling() {
+        if (!pollTimer) {
+            pollTimer = setInterval(pollUpdates, 2000);
+        }
+    }
+
+    function stopPolling() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    scrapeBtn.addEventListener('click', async function () {
+        const maxPlants = parseInt(document.getElementById('maxPlants').value, 10);
+        if (Number.isNaN(maxPlants) || maxPlants < 1 || maxPlants > 500) {
+            showAlert('danger', 'Please enter a valid number between 1 and 500.');
+            return;
+        }
+
+        scrapeBtn.disabled = true;
+        scrapeBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Starting...';
+
+        try {
+            const response = await fetch("{% url 'scraper:trigger_scraping' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ max_plants: maxPlants })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                showAlert('danger', data.message || 'Could not start scraper.');
+                setRunningUI(response.status === 409);
+                return;
+            }
+
+            showAlert('success', data.message);
+            setRunningUI(true);
+            startPolling();
+            pollUpdates();
+        } catch (error) {
+            showAlert('danger', 'Network error while starting scraper.');
+            setRunningUI(false);
+        }
+    });
+
+    stopBtn.addEventListener('click', async function () {
+        stopBtn.disabled = true;
+        stopBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Stopping...';
+
+        try {
+            const response = await fetch("{% url 'scraper:trigger_scraping_stop' %}", {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+            });
+            const data = await response.json();
+            showAlert('warning', data.message || 'Stop signal sent.');
+        } catch (error) {
+            showAlert('danger', 'Failed to send stop signal.');
+            stopBtn.disabled = false;
+            stopBtn.textContent = '🛑 Stop Scraper';
+        }
+    });
+
+    clearLogsBtn.addEventListener('click', async function () {
+        if (!confirm('Are you sure you want to clear the logs?')) {
+            return;
+        }
+        try {
+            const response = await fetch("{% url 'scraper:clear_scraping_logs' %}", {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+            });
+            if (response.ok) {
+                logTerminal.textContent = 'Logs cleared.';
+            }
+        } catch (error) {
+            showAlert('danger', 'Failed to clear logs.');
+        }
+    });
+
+    window.addEventListener('load', function () {
+        logTerminal.scrollTop = logTerminal.scrollHeight;
+        if (isRunning) {
+            startPolling();
+        }
+    });
+</script>
+{% endblock %}
